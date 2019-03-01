@@ -1,0 +1,243 @@
+---
+title: "lab8withwork"
+author: "Rachel Behm"
+date: "February 28, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+# General packages
+library(tidyverse)
+library(janitor)
+library(plotly)
+library(RColorBrewer)
+
+# Packages for cluster analysis:
+library(NbClust)
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(ggdendro)
+
+# Packages for text mining/sentiment analysis/word cloud
+library(pdftools)
+library(tidytext)
+library(wordcloud)
+```
+
+#Part 1: K means clustering
+a number of randomly placed centroids then assigns then recalcs etc etc
+```{r}
+#lets just use the iris data
+
+iris_nice <-iris %>%
+  clean_names()
+# the janitor package turns col names to snake case yay :)
+
+ggplot(iris_nice) + 
+  geom_point(aes(x= petal_length, y= petal_width, color = species))
+#without the color you would not know there are 3 instead of 2 clusters
+```
+
+How many clusters should exist? What does R think? 
+Useful if not clear species identifier or something like that
+```{r}
+#returns best number of clusters (exclude species info)
+number_est <- NbClust(iris_nice[1:4], min.nc = 2, max.nc = 10, method = "kmeans")
+
+#square brackets are base r select function "use 1 through 4 column of iris nice"
+
+#it says 2 is best but we are gonna use 3 because of our human brains know
+```
+
+Kmeans clustering with 3 groups
+```{r}
+iris_km <- kmeans(iris_nice[1:4],3)
+#"with the columns 1-4 do kmeans with 3 clusters"
+iris_km$size
+#how mant obs in each cluster
+
+iris_km$centers
+#shows center location for each variable for each cluster
+
+iris_km$cluster
+#what cluster each obs assigned to
+
+iris_cl <- data.frame(iris_nice, cluster_no=factor(iris_km$cluster))
+#take the previous info and put in data frame with original data (make new column)
+
+######################################################################################
+
+ggplot(iris_cl) +
+  geom_point(aes(x = sepal_length, y = sepal_width, color = cluster_no))
+#we can see the new clusters!
+
+ggplot(iris_cl) +
+  geom_point(aes(x= petal_length,
+             y=petal_width,
+             color = cluster_no,
+             pch = species)) + scale_color_brewer((palette = "Set2"))
+#now we can see how species fit into this
+
+
+plot_ly(x= iris_cl$petal_length, 
+        y=iris_cl$sepal_length, 
+        z= iris_cl$sepal_length, 
+        type = "scatter3d", 
+        color= iris_cl$cluster_no, 
+        symbol = iris_cl$species, 
+        colors ="Set1")
+#plotly make fancy 3d plot that is interactive
+```
+
+#Part2. Hierarchical Cluster Analysis
+```{r}
+wb_env <-read_csv("wb_env.csv")
+#note:!!!! values on very different scales! make sure this doesnt mess up the clustering
+
+
+#1. only keep top 20 greenhouse gas emitters
+wb_ghg_20 <- wb_env %>%
+  arrange(-ghg) %>%
+  head(20)
+#order it top ghg then crop top 20
+
+
+#2. scale it/ coerce to df= we gon do at the same time in  this case
+wb_scaled <- as.data.frame(scale(wb_ghg_20[3:7]))
+rownames(wb_scaled) <- wb_ghg_20$name
+#we only kept the variables but we need to make sure we can tell where they came from
+#second line makes the row names into the actual names instead of the numbers WOWOWOWOOWOW
+
+#######################################################################################
+
+#pair wise euclidean distances that the points have from eachother -- now we have that saved (dissimilarity matrix)
+diss<- dist(wb_scaled, method ="euclidian")
+
+```
+Hierarchical agglomerative clusetering by complete linkage
+```{r}
+hc_complete <- hclust(diss,method = "complete")
+
+plot(hc_complete)
+#makes a dendrogram!!
+#can see how bad china and america are with ghg >_>
+```
+
+Divisive Analysis Clustering
+```{r}
+hc_div <- diana(diss)
+plot(hc_div)
+#now says if all were own group to start with then pick up off as they are different.. this is how they would be
+```
+
+Tanglegram
+```{r}
+#diana and hierarchical different classes, we want to combine and compare
+dend1<-as.dendrogram(hc_complete)
+dend2 <-as.dendrogram(hc_div)
+
+
+tanglegram(dend1,dend2)
+#there is criss cross and not parallel
+#parallel = same order
+
+
+
+
+
+#what if we want ggplot dendrograms
+ggdendrogram(hc_complete, rotate = TRUE) + theme_minimal()
+```
+
+
+#Part3: Intro to text analysis
+```{r}
+#extract info from pdf
+
+#step1: read in
+greta_thunberg <- file.path("greta_thunberg.pdf")
+#step 2: save just the text
+thunberg_text<- pdf_text(greta_thunberg)
+######################################################################################
+
+thunberg_df <- data.frame(text = thunberg_text) %>% 
+  mutate(text_full = str_split(text, '\\n')) %>%
+  unnest(text_full)
+#it starts all in one line so we want to break it up
+#now each line is its own row
+######################################################################################
+
+#exclude text that isnt the actual speech
+speech_text <- thunberg_df %>%
+  select(text_full) %>%
+  slice(4:18)
+#slice keeps rows of certain specifications (want after row 3)
+#####################################################################################
+
+#now lets break it into separate words
+sep_words <- speech_text %>%
+  unnest_tokens(word, text_full)
+#now each word is its own row
+
+#now lets count how many of each word show up
+word_count <- sep_words %>% 
+  count(word, sort= TRUE)
+
+#we want to get rid of the words that have no real meaning like a or the or or or this etc (stop words)
+words_stop <- sep_words %>%
+  anti_join(stop_words)
+#it knows because its in the tidytext dictionary
+#####################################################################################
+
+```
+
+Sentiments
+```{r}
+#just to see what positive word examples are 
+pos_words <- get_sentiments("afinn") %>%
+                              filter(score ==5 | score == 4) %>% head(20)
+
+#neutral words
+neutral_words <- get_sentiments("afinn") %>% 
+  filter(between(score,-1,1)) %>% 
+  head(20)
+
+# Explore the other sentiment lexicons:
+get_sentiments("nrc") # Assigns words to sentiment "groups"
+get_sentiments("bing") # Binary; either "positive" or "negative"
+#######################################################################################
+
+#now lets see where our speech words fall in (first have to bind with their lexicon bins)
+sent_afinn <- words_stop %>%
+  inner_join (get_sentiments("afinn"))
+
+sent_afinn
+#since we did innerjoin, words are removed (they werent in lexicon)
+
+sent_nrc <- words_stop %>%
+  inner_join(get_sentiments("nrc"))
+sent_nrc
+
+
+nrc_count <- sent_nrc %>%
+  group_by(sentiment) %>%
+  tally()
+# you can add up stuff with tally my life is changed
+```
+
+Word Cloud
+```{r}
+wordcloud(word_count$word,
+          freq= word_count$n,
+          min.freq = 1,
+          max.words = 65,
+          scale=c(2,0.1),
+          colors = brewer.pal(3, "Dark2"))
+```
+
